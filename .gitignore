@@ -1,0 +1,92 @@
+# =========================
+# Node.js / Frontend
+# =========================
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/.swc/
+frontend/out/
+frontend/.env.local
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# =========================
+# Terraform
+# =========================
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/.build/
+infra/terraform.tfstate
+infra/terraform.tfstate.backup
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# =========================
+# Lambda Layer
+# =========================
+layer/
+lambda-layer.zip
+
+# =========================
+# Build Artifacts
+# =========================
+*.zip
+dist/
+build/
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDE
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# Test / Cache
+# =========================
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# =========================
+# Secrets (never commit)
+# =========================
+.env
+.env.local
+*.pem
+*.key
+
+# =========================
+# Reference / Testing images
+# =========================
+docs/images/reference*
+docs/Testing/
+docs/testing/
+docs/feedback/
+
+# =========================
+# draw.io swap files
+# =========================
+*.crswap
+
+# =========================
+# english files
+# =========================
+README_en.md

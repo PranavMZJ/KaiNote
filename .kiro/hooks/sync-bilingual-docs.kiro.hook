@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Sync Bilingual Docs",
+  "description": "When a Japanese .md file is edited, automatically update the corresponding _en.md English counterpart to reflect the same content. Skips _en.md files (to avoid infinite loops) and .kiro/ files (spec files are English only).",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/*.md"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A Markdown file was just edited. Check if this file needs a bilingual sync:\n\n1. If the edited file ends with `_en.md`, SKIP — do nothing (this is already an English counterpart file).\n2. If the edited file is inside the `.kiro/` directory, SKIP — spec and steering files are English only and do not need bilingual counterparts.\n3. Otherwise, this is a Japanese default `.md` file. Find or create the corresponding `_en.md` file (e.g., `README.md` → `README_en.md`, `testing.md` → `testing_en.md`) and update it to reflect the same content translated into English. Keep the same structure, headings, and formatting."
+  }
+}
