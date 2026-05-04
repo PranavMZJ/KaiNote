@@ -114,11 +114,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (refreshed && refreshed.isValid()) {
         setSession(refreshed);
         setUser(extractUser(refreshed));
-        return refreshed.getAccessToken().getJwtToken();
+        return refreshed.getIdToken().getJwtToken();
       }
       return null;
     }
-    return session.getAccessToken().getJwtToken();
+    return session.getIdToken().getJwtToken();
   }, [session]);
 
   const value = useMemo<AuthContextValue>(

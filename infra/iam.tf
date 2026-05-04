@@ -374,7 +374,8 @@ resource "aws_iam_role_policy" "generator" {
           "bedrock:ApplyGuardrail"
         ]
         Resource = [
-          "arn:aws:bedrock:${data.aws_region.current.name}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
+          "arn:aws:bedrock:*::foundation-model/anthropic.*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*",
           "arn:aws:bedrock:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:guardrail/*"
         ]
       },

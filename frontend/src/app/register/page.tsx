@@ -71,7 +71,7 @@ export default function RegisterPage() {
           <>
             <h1 style={headingStyle}>Create Account</h1>
             <p style={subtextStyle}>
-              Get started with Meeting Minutes
+              Get started with KaiNote
             </p>
 
             <form onSubmit={handleRegister} style={formStyle}>

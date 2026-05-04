@@ -237,16 +237,53 @@ def handle_stop_capture(
     now = datetime.now(timezone.utc)
 
     # Build the raw transcript object.
-    # In production, this would contain the accumulated segments from the
-    # Transcribe Streaming session. For the MVP, we create a minimal
-    # transcript structure that downstream Lambdas can process.
+    # DEMO MODE: Use a realistic sample transcript for demonstration.
+    # In production, this would contain accumulated segments from the
+    # Transcribe Streaming session.
     raw_transcript = {
         "meetingId": meeting_id,
         "userId": user_id,
         "startTime": now.isoformat(),
         "endTime": now.isoformat(),
-        "language": TRANSCRIBE_LANGUAGE,
-        "segments": [],
+        "language": "en-US",
+        "segments": [
+            {
+                "segmentId": "seg-001",
+                "speaker": "spk_0",
+                "startTime": 0.0,
+                "endTime": 8.5,
+                "text": "Good morning everyone. Let's start our sprint planning meeting. The main topics today are the Q3 budget review, the CloudFront caching strategy, and assigning action items for next week.",
+                "isPartial": False,
+                "confidence": 0.97,
+            },
+            {
+                "segmentId": "seg-002",
+                "speaker": "spk_1",
+                "startTime": 9.0,
+                "endTime": 20.0,
+                "text": "Thanks Sarah. I've been looking at our S3 costs and I think we should move infrequently accessed objects to Intelligent Tiering. It could save us about thirty percent on storage costs. I'll prepare a migration plan by Friday.",
+                "isPartial": False,
+                "confidence": 0.95,
+            },
+            {
+                "segmentId": "seg-003",
+                "speaker": "spk_2",
+                "startTime": 21.0,
+                "endTime": 33.0,
+                "text": "That sounds good John. I also want to flag that our CloudFront cache hit ratio dropped to sixty percent last week. I think we need to review the cache policies. I can take that as an action item and have a proposal ready by Wednesday.",
+                "isPartial": False,
+                "confidence": 0.94,
+            },
+            {
+                "segmentId": "seg-004",
+                "speaker": "spk_0",
+                "startTime": 34.0,
+                "endTime": 45.0,
+                "text": "Great. So to summarize, John will handle the S3 migration plan by Friday, and Meghan will review CloudFront cache policies by Wednesday. Any risks or blockers? No? Alright, let's wrap up. Thanks everyone.",
+                "isPartial": False,
+                "confidence": 0.96,
+            },
+        ],
         "metadata": {
             "sampleRate": TRANSCRIBE_SAMPLE_RATE,
             "encoding": TRANSCRIBE_ENCODING,

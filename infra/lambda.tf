@@ -252,9 +252,9 @@ resource "aws_lambda_function" "generator" {
     variables = {
       PROMPT_BUCKET     = aws_s3_bucket.prompts.id
       PROMPT_VERSION    = "v1"
-      GUARDRAIL_ID      = ""
-      GUARDRAIL_VERSION = ""
-      MODEL_ID          = "anthropic.claude-3-haiku-20240307-v1:0"
+      GUARDRAIL_ID      = aws_bedrock_guardrail.main.guardrail_id
+      GUARDRAIL_VERSION = aws_bedrock_guardrail.main.version
+      MODEL_ID          = "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
     }
   }
 

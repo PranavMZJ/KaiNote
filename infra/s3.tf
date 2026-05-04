@@ -8,7 +8,8 @@
 # ==============================================================================
 
 resource "aws_s3_bucket" "data" {
-  bucket = "${local.name_prefix_lower}-data"
+  bucket        = "${local.name_prefix_lower}-data"
+  force_destroy = true
 
   tags = local.common_tags
 }
@@ -79,7 +80,8 @@ resource "aws_s3_bucket_cors_configuration" "data" {
 # ==============================================================================
 
 resource "aws_s3_bucket" "prompts" {
-  bucket = "${local.name_prefix_lower}-prompts"
+  bucket        = "${local.name_prefix_lower}-prompts"
+  force_destroy = true
 
   tags = local.common_tags
 }

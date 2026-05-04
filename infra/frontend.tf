@@ -8,7 +8,8 @@
 # ==============================================================================
 
 resource "aws_s3_bucket" "frontend" {
-  bucket = "${local.name_prefix_lower}-frontend"
+  bucket        = "${local.name_prefix_lower}-frontend"
+  force_destroy = true
 
   tags = local.common_tags
 }

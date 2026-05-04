@@ -79,7 +79,7 @@ export default function LoginPage() {
     <main style={pageStyle}>
       <div className="glass-panel fade-in-up" style={cardStyle}>
         <h1 style={headingStyle}>Sign In</h1>
-        <p style={subtextStyle}>Welcome back to Meeting Minutes</p>
+        <p style={subtextStyle}>Welcome back to KaiNote</p>
 
         <form onSubmit={handleSubmit} style={formStyle}>
           <label htmlFor="login-email" style={labelStyle}>

@@ -73,6 +73,46 @@ export default function CapturePage() {
     }, 5000); // Poll every 5 seconds
   }, [auth]);
 
+  // Poll the REST API for the latest meeting (used when meetingId is unknown)
+  const pollForLatestMeeting = useCallback(() => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "";
+    if (!apiUrl) return;
+
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const token = await auth.getToken();
+        if (!token) return;
+
+        const response = await fetch(`${apiUrl}/meetings`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const meetings = data.meetings || [];
+
+        const completed = meetings.find((m: { status: string }) => m.status === "completed");
+        const failed = meetings.find((m: { status: string }) => m.status === "failed");
+
+        if (completed) {
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          window.location.href = `/meetings`;
+        } else if (failed) {
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          setMicError(`Minutes generation failed: ${failed.error || "Unknown error"}`);
+          setCaptureState("idle");
+        }
+      } catch {
+        // Silently retry
+      }
+    }, 5000);
+  }, [auth]);
+
   const audioCaptureRef = useRef<AudioCapture | null>(null);
   const wsManagerRef = useRef<WebSocketManager | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -211,17 +251,23 @@ export default function CapturePage() {
   const handleStop = useCallback(() => {
     setCaptureState("stopping");
 
-    // Stop audio capture
+    // Send stop signal via WebSocket FIRST (before closing audio)
+    if (wsManagerRef.current) {
+      wsManagerRef.current.sendStopCapture();
+    }
+
+    // Then stop audio capture
     if (audioCaptureRef.current) {
       audioCaptureRef.current.stop();
       audioCaptureRef.current = null;
     }
 
-    // Send stop signal via WebSocket
-    if (wsManagerRef.current) {
-      wsManagerRef.current.sendStopCapture();
-      // Don't disconnect yet — wait for capture_stopped / processing_complete
-    }
+    // Transition to processing state and start polling after a short delay
+    // (give the backend time to store the transcript and start the workflow)
+    setTimeout(() => {
+      setCaptureState("processing");
+      pollForLatestMeeting();
+    }, 3000);
   }, []);
 
   // Cleanup on unmount

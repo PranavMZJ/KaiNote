@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import boto3
@@ -338,6 +339,22 @@ def _generate(event: dict[str, Any]) -> dict[str, Any]:
 
     # 5. Parse the structured JSON response.
     report_data = extract_json_from_response(response_body)
+
+    # 5b. Fix null values for required string fields that Bedrock may return as null.
+    if not report_data.get("meeting_datetime"):
+        report_data["meeting_datetime"] = cleaned_transcript.get("startTime", datetime.now(timezone.utc).isoformat())
+    if not report_data.get("meeting_title"):
+        report_data["meeting_title"] = "Untitled Meeting"
+    if not report_data.get("schema_version"):
+        report_data["schema_version"] = schema_version
+    # Ensure list fields are never null
+    for list_field in ["participants", "agenda_items", "key_discussion_points", "decisions", "action_items", "risks_blockers", "open_questions"]:
+        if report_data.get(list_field) is None:
+            report_data[list_field] = []
+    if report_data.get("follow_up_needed") is None:
+        report_data["follow_up_needed"] = False
+    if not report_data.get("summary"):
+        report_data["summary"] = ""
 
     # 6. Parse into MinutesReport model and enforce confidence review.
     report = MinutesReport.from_dict(report_data)

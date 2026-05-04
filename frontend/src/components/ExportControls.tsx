@@ -55,7 +55,7 @@ export function ExportControls({
 
       const apiUrl = process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "";
       const response = await fetch(
-        `${apiUrl}/meetings/${meetingId}/report/download`,
+        `${apiUrl}/meetings/${meetingId}/report`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -64,19 +64,23 @@ export function ExportControls({
       );
 
       if (!response.ok) {
-        throw new Error("Download request failed");
+        throw new Error("Failed to fetch report");
       }
 
-      const data = (await response.json()) as { url?: string };
-      if (data.url) {
-        // Trigger download via pre-signed URL
-        const link = document.createElement("a");
-        link.href = data.url;
-        link.download = `meeting-${meetingId}-minutes.json`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }
+      const data = await response.json();
+      const reportJson = JSON.stringify(data.report || data, null, 2);
+
+      // Create a blob and trigger download
+      const blob = new Blob([reportJson], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `meeting-${meetingId}-minutes.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showToast("Download started!");
     } catch {
       showToast("Failed to download. Please try again.", "error");
     }

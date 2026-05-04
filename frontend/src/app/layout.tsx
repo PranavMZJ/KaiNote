@@ -17,9 +17,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Meeting Minutes",
+  title: "KaiNote",
   description:
-    "AI-powered meeting minutes — capture, transcribe, and generate structured reports.",
+    "Turn conversations into structured meeting minutes — powered by AI.",
 };
 
 export default function RootLayout({

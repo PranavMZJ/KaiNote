@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the technical design for a production-ready Meeting Minutes SaaS application on AWS. The system captures live meeting audio from a web browser, transcribes it in near real-time using Amazon Transcribe Streaming, and generates structured meeting-minutes reports using Amazon Bedrock with Guardrails. Post-processing is orchestrated by AWS Step Functions after the transcript is available.
+This docume nt describes the technical design for a production-ready Meeting Minutes SaaS application on AWS. The system captures live meeting audio from a web browser, transcribes it in near real-time using Amazon Transcribe Streaming, and generates structured meeting-minutes reports using Amazon Bedrock with Guardrails. Post-processing is orchestrated by AWS Step Functions after the transcript is available.
 
 The architecture follows AWS Well-Architected Framework principles and operates under MZJ-IAM policies in the `ap-northeast-1` region. All resources are provisioned via Terraform and adhere to the `Pranav-meeting-minutes-{purpose}` naming convention with required tags (`User=Pranav`, `Project=meeting-minutes`).
 
@@ -370,7 +370,7 @@ stateDiagram-v2
 - Environment variables: `PROMPT_BUCKET`, `PROMPT_VERSION`, `GUARDRAIL_ID`, `GUARDRAIL_VERSION`, `MODEL_ID`
 
 **Bedrock Configuration:**
-- Model: `anthropic.claude-3-haiku-20240307-v1:0` (cost-effective for structured extraction)
+- Model: `anthropic.claude-haiku-4-5-20251001-v1:0` (cost-effective for structured extraction)
 - Guardrail: applied during `InvokeModel` call via `guardrailIdentifier` and `guardrailVersion` parameters
 - Max tokens: 4096
 - Temperature: 0.1 (low for deterministic structured output)
