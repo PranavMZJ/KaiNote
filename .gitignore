@@ -87,7 +87,6 @@ docs/feedback/
 # =========================
 # english files (for personal reference, not committed)
 # =========================
-README_en.md
 infra/architecture_en.md
 infra/README_en.md
 pending_en.md
@@ -101,3 +100,5 @@ figma.md
 
 # =========================
 compare.md
+docs/readme_inspiration.md
+docs/readme_inspiration_en.md
