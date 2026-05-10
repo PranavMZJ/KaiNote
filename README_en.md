@@ -26,6 +26,8 @@
 
 **KaiNote** (会Note) is a production-ready meeting minutes SaaS application built entirely on AWS. It captures live meeting audio from the browser, transcribes it in real-time with live translation, and automatically generates structured reports using Amazon Bedrock. A post-meeting AI agent handles notifications, overdue detection, and follow-up suggestions — all autonomously.
 
+> 📄 **Sample Report:** See [sample_report/](./sample_report/kainote_report_en.md) for an example of generated meeting minutes (Web UI screenshot, Word, and PDF formats)
+
 <br/>
 
 ## ✨ Key Features
