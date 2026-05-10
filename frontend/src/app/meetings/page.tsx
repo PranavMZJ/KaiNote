@@ -476,7 +476,7 @@ export default function MeetingsPage() {
                 </button>
 
                 {report && (
-                  <ExportControls meetingId={selectedMeetingId} formattedText={formatReportAsText(report)} />
+                  <ExportControls meetingId={selectedMeetingId} formattedText={formatReportAsText(report)} report={report} />
                 )}
               </div>
 

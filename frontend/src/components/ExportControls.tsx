@@ -2,10 +2,11 @@
 
 import React, { useCallback, useState } from "react";
 import { useAuth } from "@/auth/useAuth";
+import type { MinutesReport } from "@/components/ReportRenderer";
 
 /**
- * ExportControls — "Copy to Clipboard" and "Download JSON" buttons
- * for exporting meeting minutes.
+ * ExportControls — "Copy to Clipboard", "Download JSON", and "Download Word"
+ * buttons for exporting meeting minutes.
  *
  * Requirements: 11.1, 11.2, 11.3
  */
@@ -14,6 +15,8 @@ interface ExportControlsProps {
   meetingId: string;
   /** The formatted text content to copy to clipboard. */
   formattedText: string;
+  /** The report data for Word export. */
+  report?: MinutesReport | null;
 }
 
 type ToastType = "success" | "error";
@@ -21,6 +24,7 @@ type ToastType = "success" | "error";
 export function ExportControls({
   meetingId,
   formattedText,
+  report,
 }: ExportControlsProps) {
   const { getToken } = useAuth();
   const [toast, setToast] = useState<{
@@ -85,6 +89,28 @@ export function ExportControls({
       showToast("Failed to download. Please try again.", "error");
     }
   }, [meetingId, getToken, showToast]);
+
+  const handleDownloadWord = useCallback(async () => {
+    if (!report) {
+      showToast("No report available.", "error");
+      return;
+    }
+    try {
+      const { generateDocx } = await import("@/utils/generateDocx");
+      const blob = await generateDocx(report);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `meeting-${meetingId}-minutes.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showToast("Word document downloaded!");
+    } catch {
+      showToast("Failed to generate Word document.", "error");
+    }
+  }, [report, meetingId, showToast]);
 
   return (
     <div style={{ position: "relative" }}>
@@ -182,6 +208,38 @@ export function ExportControls({
           </svg>
           Download JSON
         </button>
+
+        {report && (
+          <button
+            className="btn-secondary"
+            onClick={handleDownloadWord}
+            aria-label="Download Word"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <path
+                d="M8 2v8m0 0l-3-3m3 3l3-3"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M2 11v1.5A1.5 1.5 0 003.5 14h9a1.5 1.5 0 001.5-1.5V11"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+            Download Word
+          </button>
+        )}
       </div>
     </div>
   );
