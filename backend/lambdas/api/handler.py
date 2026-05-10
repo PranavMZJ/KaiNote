@@ -12,6 +12,11 @@ Endpoints:
 - POST /meetings/{meetingId}/retry        — retry failed meeting processing
 
 Requirements: 9.1, 10.4, 11.2, 12.4, 13.1, 13.3
+
+Environment variables:
+    DATA_BUCKET       – S3 bucket for transcripts and reports
+    STEP_FUNCTION_ARN – ARN of the post-processing Step Functions state machine
+    MEETINGS_TABLE    – DynamoDB table for meeting metadata
 """
 
 from __future__ import annotations
@@ -19,12 +24,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 import boto3
 
-from backend.models.meeting_status import MeetingStatus, MeetingStatusEnum
-from backend.utils.s3_keys import report_key, status_key
+from backend.models.meeting_status import MeetingStatusEnum
+from backend.utils.s3_keys import report_key
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -32,7 +39,7 @@ logger.setLevel(logging.INFO)
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type,Authorization",
-    "Access-Control-Allow-Methods": "GET,PUT,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,PUT,POST,DELETE,OPTIONS",
     "Content-Type": "application/json",
 }
 
@@ -45,6 +52,10 @@ def _get_data_bucket() -> str:
 
 def _get_step_function_arn() -> str:
     return os.environ.get("STEP_FUNCTION_ARN", "")
+
+
+def _get_meetings_table() -> str:
+    return os.environ.get("MEETINGS_TABLE", "")
 
 
 def _response(status_code: int, body: Any) -> dict[str, Any]:
@@ -84,6 +95,23 @@ def _load_s3_json(
         return None
 
 
+def _dynamo_item_to_dict(item: dict[str, Any]) -> dict[str, Any]:
+    """Convert a DynamoDB item (with type descriptors) to a plain dict."""
+    result: dict[str, Any] = {}
+    for key, value in item.items():
+        if "S" in value:
+            result[key] = value["S"]
+        elif "N" in value:
+            result[key] = value["N"]
+        elif "NULL" in value:
+            result[key] = None
+        elif "BOOL" in value:
+            result[key] = value["BOOL"]
+        else:
+            result[key] = value
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
@@ -91,32 +119,42 @@ def _load_s3_json(
 
 def list_meetings(
     user_id: str,
-    s3_client: Any = None,
-    bucket: str | None = None,
+    dynamodb_client: Any = None,
+    table_name: str | None = None,
 ) -> dict[str, Any]:
     """GET /meetings — list all meetings for the authenticated user.
 
-    Scans S3 objects under the ``meetings/`` prefix and filters by userId
-    in each status object.
+    Queries DynamoDB meetings table with userId partition key.
     """
-    if s3_client is None:
-        s3_client = boto3.client("s3", region_name="ap-northeast-1")
-    if bucket is None:
-        bucket = _get_data_bucket()
+    if dynamodb_client is None:
+        dynamodb_client = boto3.client("dynamodb", region_name="ap-northeast-1")
+    if table_name is None:
+        table_name = _get_meetings_table()
 
     meetings: list[dict[str, Any]] = []
-    prefix = "meetings/"
 
     try:
-        paginator = s3_client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            for obj in page.get("Contents", []):
-                key = obj["Key"]
-                if not key.endswith("/status.json"):
-                    continue
-                status_data = _load_s3_json(s3_client, bucket, key)
-                if status_data and status_data.get("userId") == user_id:
-                    meetings.append(status_data)
+        response = dynamodb_client.query(
+            TableName=table_name,
+            KeyConditionExpression="userId = :uid",
+            ExpressionAttributeValues={":uid": {"S": user_id}},
+            ScanIndexForward=False,
+        )
+        for item in response.get("Items", []):
+            meetings.append(_dynamo_item_to_dict(item))
+
+        # Handle pagination
+        while "LastEvaluatedKey" in response:
+            response = dynamodb_client.query(
+                TableName=table_name,
+                KeyConditionExpression="userId = :uid",
+                ExpressionAttributeValues={":uid": {"S": user_id}},
+                ScanIndexForward=False,
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            for item in response.get("Items", []):
+                meetings.append(_dynamo_item_to_dict(item))
+
     except Exception:
         logger.exception("Failed to list meetings for user=%s", user_id)
         return _response(500, {"error": "Failed to list meetings"})
@@ -127,25 +165,32 @@ def list_meetings(
 def get_meeting(
     user_id: str,
     meeting_id: str,
-    s3_client: Any = None,
-    bucket: str | None = None,
+    dynamodb_client: Any = None,
+    table_name: str | None = None,
 ) -> dict[str, Any]:
     """GET /meetings/{meetingId} — get meeting details and status."""
-    if s3_client is None:
-        s3_client = boto3.client("s3", region_name="ap-northeast-1")
-    if bucket is None:
-        bucket = _get_data_bucket()
+    if dynamodb_client is None:
+        dynamodb_client = boto3.client("dynamodb", region_name="ap-northeast-1")
+    if table_name is None:
+        table_name = _get_meetings_table()
 
-    sts_key = status_key(meeting_id)
-    status_data = _load_s3_json(s3_client, bucket, sts_key)
+    try:
+        response = dynamodb_client.get_item(
+            TableName=table_name,
+            Key={
+                "userId": {"S": user_id},
+                "meetingId": {"S": meeting_id},
+            },
+        )
+    except Exception:
+        logger.exception("Failed to get meeting=%s for user=%s", meeting_id, user_id)
+        return _response(500, {"error": "Failed to get meeting"})
 
-    if status_data is None:
+    item = response.get("Item")
+    if item is None:
         return _response(404, {"error": "Meeting not found"})
 
-    if status_data.get("userId") != user_id:
-        return _response(403, {"error": "Access denied"})
-
-    return _response(200, status_data)
+    return _response(200, _dynamo_item_to_dict(item))
 
 
 def get_report(
@@ -153,6 +198,8 @@ def get_report(
     meeting_id: str,
     s3_client: Any = None,
     bucket: str | None = None,
+    dynamodb_client: Any = None,
+    table_name: str | None = None,
 ) -> dict[str, Any]:
     """GET /meetings/{meetingId}/report — get the generated report JSON.
 
@@ -162,14 +209,26 @@ def get_report(
         s3_client = boto3.client("s3", region_name="ap-northeast-1")
     if bucket is None:
         bucket = _get_data_bucket()
+    if dynamodb_client is None:
+        dynamodb_client = boto3.client("dynamodb", region_name="ap-northeast-1")
+    if table_name is None:
+        table_name = _get_meetings_table()
 
-    # Verify ownership
-    sts_key = status_key(meeting_id)
-    status_data = _load_s3_json(s3_client, bucket, sts_key)
-    if status_data is None:
+    # Verify ownership via DynamoDB
+    try:
+        response = dynamodb_client.get_item(
+            TableName=table_name,
+            Key={
+                "userId": {"S": user_id},
+                "meetingId": {"S": meeting_id},
+            },
+        )
+    except Exception:
+        logger.exception("Failed to verify meeting ownership: meeting=%s", meeting_id)
+        return _response(500, {"error": "Internal server error"})
+
+    if not response.get("Item"):
         return _response(404, {"error": "Meeting not found"})
-    if status_data.get("userId") != user_id:
-        return _response(403, {"error": "Access denied"})
 
     # Try edited version first, then original
     edited_key = report_key(user_id, meeting_id, edited=True)
@@ -191,6 +250,8 @@ def put_report(
     body: str | None,
     s3_client: Any = None,
     bucket: str | None = None,
+    dynamodb_client: Any = None,
+    table_name: str | None = None,
 ) -> dict[str, Any]:
     """PUT /meetings/{meetingId}/report — save edited report.
 
@@ -201,14 +262,26 @@ def put_report(
         s3_client = boto3.client("s3", region_name="ap-northeast-1")
     if bucket is None:
         bucket = _get_data_bucket()
+    if dynamodb_client is None:
+        dynamodb_client = boto3.client("dynamodb", region_name="ap-northeast-1")
+    if table_name is None:
+        table_name = _get_meetings_table()
 
-    # Verify ownership
-    sts_key = status_key(meeting_id)
-    status_data = _load_s3_json(s3_client, bucket, sts_key)
-    if status_data is None:
+    # Verify ownership via DynamoDB
+    try:
+        response = dynamodb_client.get_item(
+            TableName=table_name,
+            Key={
+                "userId": {"S": user_id},
+                "meetingId": {"S": meeting_id},
+            },
+        )
+    except Exception:
+        logger.exception("Failed to verify meeting ownership: meeting=%s", meeting_id)
+        return _response(500, {"error": "Internal server error"})
+
+    if not response.get("Item"):
         return _response(404, {"error": "Meeting not found"})
-    if status_data.get("userId") != user_id:
-        return _response(403, {"error": "Access denied"})
 
     if not body:
         return _response(400, {"error": "Request body is required"})
@@ -239,6 +312,8 @@ def get_report_download(
     meeting_id: str,
     s3_client: Any = None,
     bucket: str | None = None,
+    dynamodb_client: Any = None,
+    table_name: str | None = None,
 ) -> dict[str, Any]:
     """GET /meetings/{meetingId}/report/download — pre-signed URL for download.
 
@@ -249,14 +324,26 @@ def get_report_download(
         s3_client = boto3.client("s3", region_name="ap-northeast-1")
     if bucket is None:
         bucket = _get_data_bucket()
+    if dynamodb_client is None:
+        dynamodb_client = boto3.client("dynamodb", region_name="ap-northeast-1")
+    if table_name is None:
+        table_name = _get_meetings_table()
 
-    # Verify ownership
-    sts_key = status_key(meeting_id)
-    status_data = _load_s3_json(s3_client, bucket, sts_key)
-    if status_data is None:
+    # Verify ownership via DynamoDB
+    try:
+        response = dynamodb_client.get_item(
+            TableName=table_name,
+            Key={
+                "userId": {"S": user_id},
+                "meetingId": {"S": meeting_id},
+            },
+        )
+    except Exception:
+        logger.exception("Failed to verify meeting ownership: meeting=%s", meeting_id)
+        return _response(500, {"error": "Internal server error"})
+
+    if not response.get("Item"):
         return _response(404, {"error": "Meeting not found"})
-    if status_data.get("userId") != user_id:
-        return _response(403, {"error": "Access denied"})
 
     # Determine which report file to serve
     edited_key = report_key(user_id, meeting_id, edited=True)
@@ -289,6 +376,108 @@ def get_report_download(
     return _response(200, {"downloadUrl": url, "key": target_key})
 
 
+def get_agent_report(
+    user_id: str,
+    meeting_id: str,
+    s3_client: Any = None,
+    bucket: str | None = None,
+) -> dict[str, Any]:
+    """GET /meetings/{meetingId}/agent-report — get the agent actions report.
+
+    Returns the agent_actions.json if it exists, or an empty object if the
+    agent hasn't run yet or failed.
+    """
+    if s3_client is None:
+        s3_client = boto3.client("s3", region_name="ap-northeast-1")
+    if bucket is None:
+        bucket = _get_data_bucket()
+
+    agent_key = f"users/{user_id}/reports/{meeting_id}/agent_actions.json"
+    report_data = _load_s3_json(s3_client, bucket, agent_key)
+
+    if report_data is not None:
+        return _response(200, {"agentReport": report_data})
+
+    return _response(200, {"agentReport": None})
+
+
+def delete_meeting(
+    user_id: str,
+    meeting_id: str,
+    s3_client: Any = None,
+    dynamodb_client: Any = None,
+    bucket: str | None = None,
+    table_name: str | None = None,
+) -> dict[str, Any]:
+    """DELETE /meetings/{meetingId} — delete a meeting and all its data.
+
+    Removes the DynamoDB record and all S3 objects (transcript, report,
+    agent_actions) for the meeting.
+    """
+    if s3_client is None:
+        s3_client = boto3.client("s3", region_name="ap-northeast-1")
+    if dynamodb_client is None:
+        dynamodb_client = boto3.client("dynamodb", region_name="ap-northeast-1")
+    if bucket is None:
+        bucket = _get_data_bucket()
+    if table_name is None:
+        table_name = _get_meetings_table()
+
+    # Verify ownership via DynamoDB
+    try:
+        response = dynamodb_client.get_item(
+            TableName=table_name,
+            Key={
+                "userId": {"S": user_id},
+                "meetingId": {"S": meeting_id},
+            },
+        )
+    except Exception:
+        logger.exception("Failed to verify meeting ownership: meeting=%s", meeting_id)
+        return _response(500, {"error": "Internal server error"})
+
+    if not response.get("Item"):
+        return _response(404, {"error": "Meeting not found"})
+
+    # Delete all S3 objects for this meeting
+    s3_prefixes = [
+        f"users/{user_id}/transcripts/{meeting_id}/",
+        f"users/{user_id}/reports/{meeting_id}/",
+    ]
+
+    for prefix in s3_prefixes:
+        try:
+            paginator = s3_client.get_paginator("list_objects_v2")
+            pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
+            for page in pages:
+                objects = page.get("Contents", [])
+                if objects:
+                    delete_keys = [{"Key": obj["Key"]} for obj in objects]
+                    s3_client.delete_objects(
+                        Bucket=bucket,
+                        Delete={"Objects": delete_keys},
+                    )
+                    logger.info("Deleted %d S3 objects under %s", len(delete_keys), prefix)
+        except Exception:
+            logger.warning("Failed to delete S3 objects under %s", prefix, exc_info=True)
+
+    # Delete DynamoDB record
+    try:
+        dynamodb_client.delete_item(
+            TableName=table_name,
+            Key={
+                "userId": {"S": user_id},
+                "meetingId": {"S": meeting_id},
+            },
+        )
+        logger.info("Deleted meeting record: meeting=%s user=%s", meeting_id, user_id)
+    except Exception:
+        logger.exception("Failed to delete DynamoDB record: meeting=%s", meeting_id)
+        return _response(500, {"error": "Failed to delete meeting"})
+
+    return _response(200, {"message": "Meeting deleted", "meetingId": meeting_id})
+
+
 def retry_meeting(
     user_id: str,
     meeting_id: str,
@@ -296,6 +485,8 @@ def retry_meeting(
     sfn_client: Any = None,
     bucket: str | None = None,
     step_function_arn: str | None = None,
+    dynamodb_client: Any = None,
+    table_name: str | None = None,
 ) -> dict[str, Any]:
     """POST /meetings/{meetingId}/retry — restart processing for failed meetings.
 
@@ -309,25 +500,39 @@ def retry_meeting(
         bucket = _get_data_bucket()
     if step_function_arn is None:
         step_function_arn = _get_step_function_arn()
+    if dynamodb_client is None:
+        dynamodb_client = boto3.client("dynamodb", region_name="ap-northeast-1")
+    if table_name is None:
+        table_name = _get_meetings_table()
 
-    # Load and verify status
-    sts_key = status_key(meeting_id)
-    status_data = _load_s3_json(s3_client, bucket, sts_key)
-    if status_data is None:
+    # Load meeting from DynamoDB
+    try:
+        response = dynamodb_client.get_item(
+            TableName=table_name,
+            Key={
+                "userId": {"S": user_id},
+                "meetingId": {"S": meeting_id},
+            },
+        )
+    except Exception:
+        logger.exception("Failed to get meeting for retry: meeting=%s", meeting_id)
+        return _response(500, {"error": "Internal server error"})
+
+    item = response.get("Item")
+    if item is None:
         return _response(404, {"error": "Meeting not found"})
-    if status_data.get("userId") != user_id:
-        return _response(403, {"error": "Access denied"})
-    if status_data.get("status") != MeetingStatusEnum.FAILED.value:
+
+    meeting_data = _dynamo_item_to_dict(item)
+
+    if meeting_data.get("status") != MeetingStatusEnum.FAILED.value:
         return _response(409, {"error": "Only failed meetings can be retried"})
 
-    # Get transcript key from status
-    transcript_key = status_data.get("transcriptKey")
+    # Get transcript key from meeting record
+    transcript_key = meeting_data.get("transcriptKey")
     if not transcript_key:
         return _response(400, {"error": "No transcript available for retry"})
 
     # Start new Step Functions execution
-    import time
-
     execution_name = f"{meeting_id}-retry-{int(time.time())}"
     sfn_input = json.dumps({
         "meetingId": meeting_id,
@@ -346,22 +551,27 @@ def retry_meeting(
         logger.exception("Failed to start retry execution for meeting=%s", meeting_id)
         return _response(500, {"error": "Failed to start retry"})
 
-    # Update status to processing
-    from datetime import datetime, timezone
-
+    # Update status to processing in DynamoDB
     now = datetime.now(timezone.utc).isoformat()
-    status_data["status"] = MeetingStatusEnum.PROCESSING.value
-    status_data["updatedAt"] = now
-    status_data["error"] = None
-    status_data["stepFunctionExecutionArn"] = execution_arn
-    status_data["currentStep"] = "Retry"
-
     try:
-        s3_client.put_object(
-            Bucket=bucket,
-            Key=sts_key,
-            Body=json.dumps(status_data, ensure_ascii=False).encode("utf-8"),
-            ContentType="application/json",
+        dynamodb_client.update_item(
+            TableName=table_name,
+            Key={
+                "userId": {"S": user_id},
+                "meetingId": {"S": meeting_id},
+            },
+            UpdateExpression="SET #s = :status, updatedAt = :now, #err = :null, stepFunctionExecutionArn = :arn, currentStep = :step",
+            ExpressionAttributeNames={
+                "#s": "status",
+                "#err": "error",
+            },
+            ExpressionAttributeValues={
+                ":status": {"S": MeetingStatusEnum.PROCESSING.value},
+                ":now": {"S": now},
+                ":null": {"NULL": True},
+                ":arn": {"S": execution_arn},
+                ":step": {"S": "Retry"},
+            },
         )
     except Exception:
         logger.warning("Failed to update status after retry start for meeting=%s", meeting_id)
@@ -384,6 +594,8 @@ _ROUTES = {
     ("GET", "/meetings/{meetingId}/report"): "get_report",
     ("PUT", "/meetings/{meetingId}/report"): "put_report",
     ("GET", "/meetings/{meetingId}/report/download"): "get_report_download",
+    ("GET", "/meetings/{meetingId}/agent-report"): "get_agent_report",
+    ("DELETE", "/meetings/{meetingId}"): "delete_meeting",
     ("POST", "/meetings/{meetingId}/retry"): "retry_meeting",
 }
 
@@ -428,6 +640,10 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return put_report(user_id, meeting_id, event.get("body"))
         elif route_name == "get_report_download":
             return get_report_download(user_id, meeting_id)
+        elif route_name == "get_agent_report":
+            return get_agent_report(user_id, meeting_id)
+        elif route_name == "delete_meeting":
+            return delete_meeting(user_id, meeting_id)
         elif route_name == "retry_meeting":
             return retry_meeting(user_id, meeting_id)
         else:

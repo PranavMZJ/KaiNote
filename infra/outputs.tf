@@ -72,6 +72,26 @@ output "dynamodb_connections_table_arn" {
   value       = aws_dynamodb_table.connections.arn
 }
 
+output "dynamodb_meetings_table_name" {
+  description = "DynamoDB meetings metadata table name"
+  value       = aws_dynamodb_table.meetings.name
+}
+
+output "dynamodb_meetings_table_arn" {
+  description = "DynamoDB meetings metadata table ARN"
+  value       = aws_dynamodb_table.meetings.arn
+}
+
+output "dynamodb_audio_buffer_table_name" {
+  description = "DynamoDB audio buffer table name"
+  value       = aws_dynamodb_table.audio_buffer.name
+}
+
+output "dynamodb_audio_buffer_table_arn" {
+  description = "DynamoDB audio buffer table ARN"
+  value       = aws_dynamodb_table.audio_buffer.arn
+}
+
 # Step Functions outputs
 output "sfn_state_machine_arn" {
   description = "Step Functions state machine ARN"
@@ -113,4 +133,36 @@ output "cloudfront_distribution_id" {
 output "s3_frontend_bucket_name" {
   description = "S3 frontend bucket name (static site assets)"
   value       = aws_s3_bucket.frontend.id
+}
+
+# ECS Fargate outputs
+output "ecr_repository_url" {
+  description = "ECR repository URL for the transcription service (used for docker push)"
+  value       = aws_ecr_repository.transcription.repository_url
+}
+
+output "alb_dns_name" {
+  description = "ALB DNS name (WebSocket endpoint for the frontend)"
+  value       = aws_lb.transcription.dns_name
+}
+
+output "ecs_cluster_name" {
+  description = "ECS cluster name"
+  value       = aws_ecs_cluster.main.name
+}
+
+output "ecs_service_name" {
+  description = "ECS service name"
+  value       = aws_ecs_service.transcription.name
+}
+
+output "ecs_instance_id" {
+  description = "ECS EC2 host instance ID"
+  value       = aws_instance.ecs_host.id
+}
+
+# SNS outputs
+output "sns_notifications_topic_arn" {
+  description = "SNS topic ARN for post-meeting notifications"
+  value       = aws_sns_topic.notifications.arn
 }

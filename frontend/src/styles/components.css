@@ -226,3 +226,14 @@
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
+
+/* ---------- Fade-In Animation (simple) ---------- */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

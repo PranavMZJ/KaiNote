@@ -393,6 +393,43 @@ resource "aws_sfn_state_machine" "workflow" {
             Next        = "MarkFailed"
           }
         ]
+        Next = "RunAgent"
+      }
+
+      # -----------------------------------------------------------------------
+      # Step 6a-2: Run post-meeting agent (non-blocking)
+      # -----------------------------------------------------------------------
+      RunAgent = {
+        Type     = "Task"
+        Resource = "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${local.name_prefix}-agent"
+        Parameters = {
+          "action"      = "run_agent"
+          "meetingId.$" = "$.meetingId"
+          "userId.$"    = "$.userId"
+          "bucket.$"    = "$.storage.bucket"
+          "reportKey.$" = "$.storage.reportKey"
+        }
+        ResultPath = "$.agentResult"
+        Retry = [
+          {
+            ErrorEquals = [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException",
+              "Lambda.TooManyRequestsException"
+            ]
+            IntervalSeconds = 2
+            MaxAttempts     = 1
+            BackoffRate     = 2.0
+          }
+        ]
+        Catch = [
+          {
+            ErrorEquals = ["States.ALL"]
+            ResultPath  = "$.agentError"
+            Next        = "UpdateStatus"
+          }
+        ]
         Next = "UpdateStatus"
       }
 

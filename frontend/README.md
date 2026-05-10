@@ -1,36 +1,70 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# KaiNote Frontend
 
-## Getting Started
+React/Next.js single-page application for the KaiNote meeting minutes platform. Uses a Lusion-inspired dark theme with glassmorphism panels.
 
-First, run the development server:
+## Tech Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **Framework:** Next.js 16 (static export mode for S3 hosting)
+- **Auth:** Amazon Cognito (`amazon-cognito-identity-js`)
+- **Audio:** Web Audio API (PCM 16-bit, 16kHz)
+- **WebSocket:** Native WebSocket to ECS Fargate transcription service
+- **Styling:** CSS custom properties (design system in `src/styles/`)
+
+## Pages
+
+| Route | Description |
+|-------|-------------|
+| `/` | Landing page (KaiNote branding) |
+| `/login` | Sign in with Cognito |
+| `/register` | Create account + email verification |
+| `/capture` | Meeting capture (audio + live transcription + translation) |
+| `/meetings` | Meeting list + report viewer + agent actions |
+
+## Environment Variables
+
+Create `frontend/.env.local` (see `.env.local.example`):
+
+```
+NEXT_PUBLIC_COGNITO_USER_POOL_ID=ap-northeast-1_xxxxx
+NEXT_PUBLIC_COGNITO_APP_CLIENT_ID=xxxxx
+NEXT_PUBLIC_API_GATEWAY_URL=https://xxxxx.execute-api.ap-northeast-1.amazonaws.com/v1
+NEXT_PUBLIC_WEBSOCKET_URL=wss://xxxxx.execute-api.ap-northeast-1.amazonaws.com/v1
+NEXT_PUBLIC_TRANSCRIPTION_WS_URL=wss://xxxxx.cloudfront.net
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Generate from Terraform outputs:
+```bash
+cat > .env.local << EOF
+NEXT_PUBLIC_COGNITO_USER_POOL_ID=$(terraform -chdir=../infra output -raw cognito_user_pool_id)
+NEXT_PUBLIC_COGNITO_APP_CLIENT_ID=$(terraform -chdir=../infra output -raw cognito_app_client_id)
+NEXT_PUBLIC_API_GATEWAY_URL=$(terraform -chdir=../infra output -raw rest_api_endpoint)
+NEXT_PUBLIC_WEBSOCKET_URL=$(terraform -chdir=../infra output -raw ws_api_endpoint)
+NEXT_PUBLIC_TRANSCRIPTION_WS_URL=wss://$(terraform -chdir=../infra output -raw cloudfront_distribution_domain_name)
+EOF
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Development
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install
+npm run dev       # http://localhost:3000
+```
 
-## Learn More
+## Build & Deploy
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run build     # Static export to out/
+# Or use the deploy script:
+../scripts/deploy-frontend.sh
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Key Components
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Component | File | Description |
+|-----------|------|-------------|
+| TranscriptPanel | `src/components/TranscriptPanel.tsx` | Live transcription display |
+| ReportRenderer | `src/components/ReportRenderer.tsx` | Meeting report viewer |
+| AgentActionsPanel | `src/components/AgentActionsPanel.tsx` | Post-meeting agent results |
+| ExportControls | `src/components/ExportControls.tsx` | Copy/download buttons |
+| TranscriptionClient | `src/capture/TranscriptionClient.ts` | WebSocket client to Fargate |
+| AudioCapture | `src/capture/AudioCapture.ts` | Browser microphone capture |

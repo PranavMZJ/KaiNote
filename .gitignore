@@ -77,8 +77,6 @@ htmlcov/
 # Reference / Testing images
 # =========================
 docs/images/reference*
-docs/Testing/
-docs/testing/
 docs/feedback/
 
 # =========================
@@ -87,12 +85,19 @@ docs/feedback/
 *.crswap
 
 # =========================
-# english files
+# english files (for personal reference, not committed)
 # =========================
 README_en.md
+infra/architecture_en.md
+infra/README_en.md
+pending_en.md
+compare_en.md
 
 # =========================
 # figma files
 # =========================
 figma_en.md
 figma.md
+
+# =========================
+compare.md

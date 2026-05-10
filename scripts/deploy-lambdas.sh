@@ -40,6 +40,7 @@ LAMBDAS=(
   "generator:generator"
   "validator:validator"
   "store:store"
+  "agent:agent"
 )
 
 mkdir -p "$BUILD_DIR"
@@ -124,7 +125,7 @@ for entry in "${LAMBDAS[@]}"; do
     --query "FunctionName" > /dev/null 2>&1
 done
 
-echo "    Layer attached to all 9 functions."
+echo "    Layer attached to all 10 functions."
 echo ""
 
 # Wait for all function updates to complete
@@ -229,7 +230,7 @@ done
 # =============================================
 
 echo "=============================================="
-echo "  All 9 Lambda functions deployed!"
+echo "  All 10 Lambda functions deployed!"
 echo "=============================================="
 echo ""
 echo "Functions deployed:"

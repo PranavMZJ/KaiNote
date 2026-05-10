@@ -72,6 +72,15 @@ resource "aws_cloudwatch_log_group" "store" {
 }
 
 # ==============================================================================
+# Lambda Layer (managed externally by deploy-lambdas.sh)
+# This data source references the existing layer so Terraform doesn't strip it.
+# ==============================================================================
+
+data "aws_lambda_layer_version" "deps" {
+  layer_name = "${local.name_prefix}-deps"
+}
+
+# ==============================================================================
 # 1. WebSocket Authorizer Lambda — 256 MB / 30 s
 # ==============================================================================
 
@@ -85,6 +94,7 @@ resource "aws_lambda_function" "ws_authorizer" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  layers           = [data.aws_lambda_layer_version.deps.arn]
 
   environment {
     variables = {
@@ -112,6 +122,7 @@ resource "aws_lambda_function" "ws_handler" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  layers           = [data.aws_lambda_layer_version.deps.arn]
 
   environment {
     variables = {
@@ -139,13 +150,16 @@ resource "aws_lambda_function" "stream_bridge" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  layers           = [data.aws_lambda_layer_version.deps.arn]
 
   environment {
     variables = {
       TRANSCRIPT_BUCKET  = aws_s3_bucket.data.id
       STEP_FUNCTION_ARN  = "arn:aws:states:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:stateMachine:${local.name_prefix}-workflow"
-      CONNECTIONS_TABLE   = aws_dynamodb_table.connections.name
+      CONNECTIONS_TABLE  = aws_dynamodb_table.connections.name
       WS_API_ENDPOINT    = "${aws_apigatewayv2_api.ws.api_endpoint}/${aws_apigatewayv2_stage.ws.name}"
+      MEETINGS_TABLE     = aws_dynamodb_table.meetings.name
+      AUDIO_BUFFER_TABLE = aws_dynamodb_table.audio_buffer.name
     }
   }
 
@@ -168,11 +182,13 @@ resource "aws_lambda_function" "api" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  layers           = [data.aws_lambda_layer_version.deps.arn]
 
   environment {
     variables = {
       DATA_BUCKET       = aws_s3_bucket.data.id
       STEP_FUNCTION_ARN = "arn:aws:states:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:stateMachine:${local.name_prefix}-workflow"
+      MEETINGS_TABLE    = aws_dynamodb_table.meetings.name
     }
   }
 
@@ -195,6 +211,7 @@ resource "aws_lambda_function" "cleanup" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  layers           = [data.aws_lambda_layer_version.deps.arn]
 
   environment {
     variables = {
@@ -221,6 +238,7 @@ resource "aws_lambda_function" "chunker" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  layers           = [data.aws_lambda_layer_version.deps.arn]
 
   environment {
     variables = {
@@ -247,6 +265,7 @@ resource "aws_lambda_function" "generator" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  layers           = [data.aws_lambda_layer_version.deps.arn]
 
   environment {
     variables = {
@@ -255,6 +274,7 @@ resource "aws_lambda_function" "generator" {
       GUARDRAIL_ID      = aws_bedrock_guardrail.main.guardrail_id
       GUARDRAIL_VERSION = aws_bedrock_guardrail.main.version
       MODEL_ID          = "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
+      DATA_BUCKET       = aws_s3_bucket.data.id
     }
   }
 
@@ -277,6 +297,7 @@ resource "aws_lambda_function" "validator" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  layers           = [data.aws_lambda_layer_version.deps.arn]
 
   environment {
     variables = {
@@ -303,14 +324,53 @@ resource "aws_lambda_function" "store" {
 
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  layers           = [data.aws_lambda_layer_version.deps.arn]
 
   environment {
     variables = {
-      DATA_BUCKET = aws_s3_bucket.data.id
+      DATA_BUCKET    = aws_s3_bucket.data.id
+      MEETINGS_TABLE = aws_dynamodb_table.meetings.name
     }
   }
 
   depends_on = [aws_cloudwatch_log_group.store]
+
+  tags = local.common_tags
+}
+
+# ==============================================================================
+# 10. Post-Meeting Agent Lambda — 1024 MB / 120 s
+# ==============================================================================
+
+resource "aws_cloudwatch_log_group" "agent" {
+  name              = "/aws/lambda/${local.name_prefix}-agent"
+  retention_in_days = 30
+  tags              = local.common_tags
+}
+
+resource "aws_lambda_function" "agent" {
+  function_name = "${local.name_prefix}-agent"
+  role          = aws_iam_role.agent.arn
+  handler       = "handler.handler"
+  runtime       = "python3.12"
+  memory_size   = 1024
+  timeout       = 120
+
+  filename         = data.archive_file.lambda_placeholder.output_path
+  source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  layers           = [data.aws_lambda_layer_version.deps.arn]
+
+  environment {
+    variables = {
+      DATA_BUCKET    = aws_s3_bucket.data.id
+      PROMPT_BUCKET  = aws_s3_bucket.prompts.id
+      MODEL_ID       = "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
+      SNS_TOPIC_ARN  = aws_sns_topic.notifications.arn
+      MEETINGS_TABLE = aws_dynamodb_table.meetings.name
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.agent]
 
   tags = local.common_tags
 }

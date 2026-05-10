@@ -118,3 +118,12 @@ Note in the example above:
 ## Transcript
 
 {transcript}
+
+## Context from Prior Meetings (if available)
+
+The following is context from recent prior meetings. Use this to:
+- Reference related decisions from past meetings
+- Note if action items from prior meetings are being discussed again
+- Identify recurring topics or unresolved issues
+
+{prior_context}

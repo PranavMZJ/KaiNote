@@ -146,9 +146,25 @@ resource "aws_iam_role_policy" "stream_bridge" {
         Effect = "Allow"
         Action = [
           "transcribe:StartStreamTranscriptionWebSocket",
-          "transcribe:StartStreamTranscription"
+          "transcribe:StartStreamTranscription",
+          "transcribe:StartTranscriptionJob",
+          "transcribe:GetTranscriptionJob"
         ]
         Resource = "*"
+      },
+      {
+        Sid    = "DynamoDBAudioBuffer"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:Query",
+          "dynamodb:DeleteItem",
+          "dynamodb:BatchWriteItem"
+        ]
+        Resource = [
+          aws_dynamodb_table.audio_buffer.arn,
+          "${aws_dynamodb_table.audio_buffer.arn}/index/*"
+        ]
       },
       {
         Sid    = "S3DataBucketWrite"
@@ -177,6 +193,18 @@ resource "aws_iam_role_policy" "stream_bridge" {
         Resource = [
           aws_dynamodb_table.connections.arn,
           "${aws_dynamodb_table.connections.arn}/index/*"
+        ]
+      },
+      {
+        Sid    = "DynamoDBMeetingsWrite"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem"
+        ]
+        Resource = [
+          aws_dynamodb_table.meetings.arn,
+          "${aws_dynamodb_table.meetings.arn}/index/*"
         ]
       },
       {
@@ -226,11 +254,27 @@ resource "aws_iam_role_policy" "api" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
+          "s3:DeleteObject"
         ]
         Resource = [
           aws_s3_bucket.data.arn,
           "${aws_s3_bucket.data.arn}/*"
+        ]
+      },
+      {
+        Sid    = "DynamoDBMeetingsReadWrite"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query"
+        ]
+        Resource = [
+          aws_dynamodb_table.meetings.arn,
+          "${aws_dynamodb_table.meetings.arn}/index/*"
         ]
       },
       {
@@ -366,6 +410,18 @@ resource "aws_iam_role_policy" "generator" {
         Resource = "${aws_s3_bucket.prompts.arn}/*"
       },
       {
+        Sid    = "S3DataBucketRead"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.data.arn,
+          "${aws_s3_bucket.data.arn}/*"
+        ]
+      },
+      {
         Sid    = "BedrockInvoke"
         Effect = "Allow"
         Action = [
@@ -462,6 +518,19 @@ resource "aws_iam_role_policy" "store" {
         Resource = "${aws_s3_bucket.data.arn}/*"
       },
       {
+        Sid    = "DynamoDBMeetingsWrite"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:GetItem"
+        ]
+        Resource = [
+          aws_dynamodb_table.meetings.arn,
+          "${aws_dynamodb_table.meetings.arn}/index/*"
+        ]
+      },
+      {
         Sid    = "CloudWatchLogs"
         Effect = "Allow"
         Action = [
@@ -505,7 +574,8 @@ resource "aws_iam_role_policy" "sfn" {
           "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${local.name_prefix}-chunker",
           "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${local.name_prefix}-generator",
           "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${local.name_prefix}-validator",
-          "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${local.name_prefix}-store"
+          "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${local.name_prefix}-store",
+          "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${local.name_prefix}-agent"
         ]
       },
       {
@@ -524,6 +594,222 @@ resource "aws_iam_role_policy" "sfn" {
           "logs:DescribeLogGroups"
         ]
         Resource = "*"
+      }
+    ]
+  })
+}
+
+# ==============================================================================
+# 11. ECS Task Execution Role — ECR pull, CloudWatch Logs
+# ==============================================================================
+
+data "aws_iam_policy_document" "ecs_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ecs_exec" {
+  name                 = "${local.name_prefix}-transcription-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.ecs_assume_role.json
+  permissions_boundary = local.permissions_boundary
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy" "ecs_exec" {
+  name = "${local.name_prefix}-transcription-exec-policy"
+  role = aws_iam_role.ecs_exec.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ECRPull"
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${local.name_prefix}-transcription:*"
+      }
+    ]
+  })
+}
+
+# ==============================================================================
+# 12. ECS Task Role — Transcribe, S3, Step Functions, DynamoDB
+# ==============================================================================
+
+resource "aws_iam_role" "ecs_task" {
+  name                 = "${local.name_prefix}-transcription-task-role"
+  assume_role_policy   = data.aws_iam_policy_document.ecs_assume_role.json
+  permissions_boundary = local.permissions_boundary
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy" "ecs_task" {
+  name = "${local.name_prefix}-transcription-task-policy"
+  role = aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "TranscribeStreaming"
+        Effect = "Allow"
+        Action = [
+          "transcribe:StartStreamTranscription",
+          "transcribe:StartStreamTranscriptionWebSocket"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "S3DataBucket"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject"
+        ]
+        Resource = "${aws_s3_bucket.data.arn}/*"
+      },
+      {
+        Sid    = "StepFunctionsStart"
+        Effect = "Allow"
+        Action = [
+          "states:StartExecution"
+        ]
+        Resource = aws_sfn_state_machine.workflow.arn
+      },
+      {
+        Sid    = "DynamoDBMeetings"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:GetItem"
+        ]
+        Resource = [
+          aws_dynamodb_table.meetings.arn,
+          "${aws_dynamodb_table.meetings.arn}/index/*"
+        ]
+      },
+      {
+        Sid    = "BedrockInvoke"
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel"
+        ]
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/anthropic.*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*"
+        ]
+      },
+      {
+        Sid    = "TranslateText"
+        Effect = "Allow"
+        Action = [
+          "translate:TranslateText"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# ==============================================================================
+# 13. Post-Meeting Agent Lambda Role — S3 read/write, Bedrock, SNS, CloudWatch
+# ==============================================================================
+
+resource "aws_iam_role" "agent" {
+  name                 = "${local.name_prefix}-agent-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.permissions_boundary
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy" "agent" {
+  name = "${local.name_prefix}-agent-policy"
+  role = aws_iam_role.agent.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "S3DataBucketRead"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.data.arn,
+          "${aws_s3_bucket.data.arn}/*"
+        ]
+      },
+      {
+        Sid    = "S3DataBucketWriteAgentReport"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject"
+        ]
+        Resource = "${aws_s3_bucket.data.arn}/users/*/reports/*/agent_actions.json"
+      },
+      {
+        Sid    = "S3PromptsBucketRead"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "${aws_s3_bucket.prompts.arn}/*"
+      },
+      {
+        Sid    = "BedrockInvoke"
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel"
+        ]
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/anthropic.*",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*"
+        ]
+      },
+      {
+        Sid    = "SNSPublish"
+        Effect = "Allow"
+        Action = [
+          "sns:Publish"
+        ]
+        Resource = aws_sns_topic.notifications.arn
+      },
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.name_prefix}-agent:*"
       }
     ]
   })

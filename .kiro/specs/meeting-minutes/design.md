@@ -18,6 +18,8 @@ The architecture follows AWS Well-Architected Framework principles and operates 
 
 ### High-Level Architecture Diagram
 
+> **Note:** The canonical architecture diagram is maintained at `docs/images/architecture-current.md` with full Mermaid diagrams. Below is a simplified overview.
+
 ```mermaid
 graph TB
     subgraph "Frontend (React/Next.js on S3 + CloudFront)"
@@ -36,18 +38,22 @@ graph TB
         WS[API Gateway WebSocket API]
     end
 
-    subgraph "Streaming Backend"
-        WSH[WebSocket Handler Lambda]
-        SB[Streaming Bridge Lambda / ECS Task]
+    subgraph "Live Transcription (ECS Fargate)"
+        ALB[Application Load Balancer]
+        FARGATE[ECS Fargate Service]
     end
 
-    subgraph "Transcription"
+    subgraph "AI/ML Services"
         ATS[Amazon Transcribe Streaming]
+        BR[Amazon Bedrock - Claude Haiku 4.5]
+        BG[Bedrock Guardrails]
+        TRANSLATE[Amazon Translate]
     end
 
     subgraph "Storage"
         S3T[S3: Transcripts & Reports]
         S3P[S3: Prompt Templates]
+        DDB[DynamoDB: Meetings]
     end
 
     subgraph "Post-Processing"
@@ -57,11 +63,11 @@ graph TB
         LGen[Lambda: Minutes Generator]
         LVal[Lambda: Schema Validator]
         LStore[Lambda: Report Storage]
+        LAgent[Lambda: Post-Meeting Agent]
     end
 
-    subgraph "AI"
-        BR[Amazon Bedrock]
-        BG[Bedrock Guardrails]
+    subgraph "Notifications"
+        SNS[Amazon SNS]
     end
 
     subgraph "Observability"
@@ -70,27 +76,35 @@ graph TB
 
     UI -->|JWT Auth| CUP
     UI -->|REST + JWT| REST
-    AC -->|Audio Chunks| WS
-    WS -->|Route| WSH
-    WSH -->|Forward Audio| SB
-    SB -->|Stream Audio| ATS
-    ATS -->|Transcript Segments| SB
-    SB -->|Segments via WS| WS
-    WS -->|Live Captions| TP
-    SB -->|Store Raw Transcript| S3T
-    SB -->|Start Execution| SF
+    AC -->|WSS via CloudFront| ALB
+    ALB --> FARGATE
+    FARGATE -->|Stream Audio| ATS
+    FARGATE -->|Translate Segments| TRANSLATE
+    FARGATE -->|Speaker Re-attribution| BR
+    ATS -->|Transcript Segments| FARGATE
+    FARGATE -->|Live Captions via WS| UI
+    FARGATE -->|Store Raw Transcript| S3T
+    FARGATE -->|Start Execution| SF
+    FARGATE -->|Create Record| DDB
     SF -->|Step 1| LClean
     SF -->|Step 2| LChunk
     SF -->|Step 3| LGen
     SF -->|Step 4| LVal
     SF -->|Step 5| LStore
-    LGen -->|Invoke with Guardrails| BR
+    SF -->|Step 6| LAgent
+    LGen -->|Invoke with Guardrails + RAG| BR
     BR --- BG
     LGen -->|Read Prompt| S3P
+    LGen -->|Read Prior Reports| S3T
     LStore -->|Write Report| S3T
+    LStore -->|Update Status| DDB
+    LAgent -->|Analyze Report| BR
+    LAgent -->|Send Notifications| SNS
+    LAgent -->|Store Actions| S3T
+    REST -->|CRUD Meetings| DDB
     REST -->|Get Reports| S3T
     SF --> CW
-    SB --> CW
+    FARGATE --> CW
     LGen --> CW
 ```
 
@@ -559,6 +573,7 @@ stateDiagram-v2
 | Cognito User Pool | `Pranav-meeting-minutes-user-pool` | N/A |
 | REST API Gateway | `Pranav-meeting-minutes-rest-api` | N/A |
 | WebSocket API Gateway | `Pranav-meeting-minutes-ws-api` | N/A |
+| CloudFront Distribution | `Pranav-meeting-minutes-frontend` | N/A |
 | WS Authorizer Lambda | `Pranav-meeting-minutes-ws-authorizer` | `Pranav-meeting-minutes-ws-auth-role` |
 | WS Handler Lambda | `Pranav-meeting-minutes-ws-handler` | `Pranav-meeting-minutes-ws-handler-role` |
 | Stream Bridge Lambda | `Pranav-meeting-minutes-stream-bridge` | `Pranav-meeting-minutes-stream-role` |
@@ -568,12 +583,20 @@ stateDiagram-v2
 | Minutes Generator Lambda | `Pranav-meeting-minutes-generator` | `Pranav-meeting-minutes-generator-role` |
 | Schema Validator Lambda | `Pranav-meeting-minutes-validator` | `Pranav-meeting-minutes-validator-role` |
 | Report Storage Lambda | `Pranav-meeting-minutes-store` | `Pranav-meeting-minutes-store-role` |
+| Post-Meeting Agent Lambda | `Pranav-meeting-minutes-agent` | `Pranav-meeting-minutes-agent-role` |
+| ECS Fargate Service | `Pranav-meeting-minutes-transcription` | `Pranav-meeting-minutes-transcription-task-role` |
+| Application Load Balancer | `Pranav-meeting-minutes-transcription-alb` | N/A |
+| ECR Repository | `Pranav-meeting-minutes-transcription` | N/A |
 | Step Functions | `Pranav-meeting-minutes-workflow` | `Pranav-meeting-minutes-sfn-role` |
 | S3 Data Bucket | `pranav-meeting-minutes-data` | N/A |
 | S3 Prompts Bucket | `pranav-meeting-minutes-prompts` | N/A |
+| S3 Frontend Bucket | `pranav-meeting-minutes-frontend` | N/A |
+| DynamoDB Meetings | `Pranav-meeting-minutes-meetings` | N/A |
 | DynamoDB Connections | `Pranav-meeting-minutes-connections` | N/A |
+| SNS Notifications | `Pranav-meeting-minutes-notifications` | N/A |
 | Bedrock Guardrail | `Pranav-meeting-minutes-guardrail` | N/A |
-| CloudWatch Log Groups | `Pranav-meeting-minutes-{component}-logs` | N/A |
+| VPC | `Pranav-meeting-minutes-vpc` | N/A |
+| CloudWatch Log Groups | `/aws/lambda/Pranav-meeting-minutes-*`, `/ecs/Pranav-meeting-minutes-*` | N/A |
 
 **All IAM roles include:**
 ```hcl

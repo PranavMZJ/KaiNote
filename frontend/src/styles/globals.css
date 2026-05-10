@@ -61,6 +61,31 @@
   --duration-slow: 500ms;
 }
 
+/* ---------- Light Theme ---------- */
+[data-theme="light"] {
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #F5F5F7;
+  --bg-elevated: #EBEBF0;
+  --bg-glass: rgba(0, 0, 0, 0.03);
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-focus: rgba(0, 0, 0, 0.15);
+  --text-primary: #1D1D1F;
+  --text-secondary: #6E6E73;
+  --text-tertiary: #AEAEB2;
+  --accent-primary: #5B4BD6;
+  --accent-hover: #4A3BC6;
+  --accent-glow: rgba(91, 75, 214, 0.12);
+  --success: #28A745;
+  --warning: #E68A00;
+  --error: #DC3545;
+  --recording: #DC3545;
+}
+
+[data-theme="light"] html,
+html[data-theme="light"] {
+  color-scheme: light;
+}
+
 /* ==========================================================================
    Base Styles
    ========================================================================== */

@@ -1,0 +1,19 @@
+<svg width="320" height="80" viewBox="0 0 320 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Light background version (dark "Kai" for white/light backgrounds) -->
+  
+  <!-- Waveform icon background -->
+  <rect x="4" y="12" width="56" height="56" rx="12" fill="#6C5CE7" fill-opacity="0.12"/>
+  
+  <!-- Waveform bars -->
+  <rect x="14" y="30" width="5" height="20" rx="2.5" fill="#5B4BD6"/>
+  <rect x="22" y="24" width="5" height="32" rx="2.5" fill="#5B4BD6"/>
+  <rect x="30" y="16" width="5" height="48" rx="2.5" fill="#5B4BD6"/>
+  <rect x="38" y="22" width="5" height="36" rx="2.5" fill="#5B4BD6"/>
+  <rect x="46" y="28" width="5" height="24" rx="2.5" fill="#5B4BD6"/>
+  
+  <!-- "Kai" text - dark for light backgrounds -->
+  <text x="72" y="54" font-family="Inter, system-ui, sans-serif" font-size="42" font-weight="700" letter-spacing="-1.5" fill="#1D1D1F">Kai</text>
+  
+  <!-- "Note" text - accent purple -->
+  <text x="152" y="54" font-family="Inter, system-ui, sans-serif" font-size="42" font-weight="700" letter-spacing="-1.5" fill="#5B4BD6">Note</text>
+</svg>

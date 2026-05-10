@@ -22,3 +22,13 @@ resource "aws_s3_object" "minutes_schema_v1" {
 
   tags = local.common_tags
 }
+
+resource "aws_s3_object" "agent_prompt_v1" {
+  bucket       = aws_s3_bucket.prompts.id
+  key          = "prompts/v1/agent_prompt.txt"
+  source       = "${path.module}/../backend/prompts/v1/agent_prompt.txt"
+  content_type = "text/plain; charset=utf-8"
+  etag         = filemd5("${path.module}/../backend/prompts/v1/agent_prompt.txt")
+
+  tags = local.common_tags
+}

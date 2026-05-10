@@ -1,103 +1,121 @@
-# Meeting Minutes — AI 議事録自動生成アプリケーション
+<div align="center">
 
-ブラウザから会議音声をキャプチャし、リアルタイムで文字起こしを行い、AI が構造化された議事録レポートを自動生成する SaaS アプリケーションです。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/svg/kainote-logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/svg/kainote-logo-light.svg">
+  <img alt="KaiNote" src="docs/images/svg/kainote-logo-light.svg" width="320">
+</picture>
 
-## アーキテクチャ
+<br/><br/>
 
-![AWS アーキテクチャ図](docs/images/meeting-minutes-architecture.drawio.svg)
+### AI 議事録自動生成 — 音声から構造化レポートを数秒で
 
-## 主な機能
+<br/>
 
-- **ライブ音声キャプチャ** — ブラウザのマイクから会議音声をリアルタイムでキャプチャ
-- **リアルタイム文字起こし** — Amazon Transcribe Streaming による話者ラベル付きライブトランスクリプト
-- **AI 議事録生成** — Amazon Bedrock（Claude 3 Haiku）が構造化された議事録を自動生成
-  - 会議の要約
-  - 議題 / 議論のポイント
-  - 決定事項（根拠・担当者・エビデンス付き）
-  - アクションアイテム（担当者・期限・優先度・信頼度スコア付き）
-  - リスク / ブロッカー
-  - 未解決事項
-- **人間レビュー支援** — 信頼度の低いアイテムを自動フラグ、未設定の担当者・期限をハイライト
-- **インライン編集** — 生成された議事録をブラウザ上で直接編集・保存
-- **エクスポート** — クリップボードコピー、JSON ダウンロード
-- **セキュリティ** — Amazon Cognito 認証、ユーザーごとのデータ分離、最小権限 IAM、Bedrock Guardrails
-- **サーバーレス** — 全コンポーネントが従量課金、アイドル時のコストはほぼゼロ
+[English](./README_en.md) · **日本語** · [アーキテクチャ](./infra/architecture.md) · [デプロイ手順](./infra/README.md)
 
-## 技術スタック
+</div>
+
+<hr/>
+
+<div align="center">
+  <img src="docs/gif/kainote-demo.gif" alt="KaiNote デモ" width="800">
+</div>
+
+<br/>
+
+**KaiNote**（会Note）は、AWS 上に構築された本番レベルの議事録 SaaS アプリケーションです。ブラウザから会議音声をキャプチャし、リアルタイム文字起こし＋ライブ翻訳を行い、Amazon Bedrock で構造化レポートを自動生成します。ポストミーティング AI エージェントが通知送信、期限超過検出、フォローアップ提案を自律的に実行します。
+
+<br/>
+
+## ✨ 主な機能
+
+- 🎙️ **ライブ文字起こし** — Amazon Transcribe Streaming による話者識別付きリアルタイム音声テキスト変換
+- 🌐 **ライブ翻訳** — 7言語へのリアルタイム翻訳、セッション中に切替可能
+- 🤖 **AI 議事録生成** — Bedrock（Claude Haiku 4.5）が構造化レポートを生成：要約、決定事項、アクションアイテム、リスク
+- 🔗 **RAG（過去会議コンテキスト）** — 直近の会議の決定事項・アクションアイテムを参照
+- 📋 **ポストミーティングエージェント** — 通知自動送信、期限超過検出、フォローアップ会議提案
+- 📧 **メール通知** — アクションアイテム担当者にタスク詳細・期限・コンテキスト付きメール送信
+- 🗣️ **話者再帰属** — Bedrock が会話コンテキストから話者名を特定
+- ✏️ **インライン編集** — 生成されたレポートをブラウザ上で直接編集
+- 🌙 **ダーク / ライトテーマ** — ワンクリックでテーマ切替
+- 🇯🇵 **多言語 UI** — アプリインターフェースを英語・日本語で切替
+- 🔍 **検索 & フィルター** — タイトル、日付、ステータスで会議を検索
+- 🔒 **セキュア** — Cognito 認証、ユーザーごとのデータ分離、最小権限 IAM、Bedrock Guardrails
+
+<br/>
+
+## 🛠️ 技術スタック
 
 | レイヤー | 技術 |
 |---------|------|
-| フロントエンド | React / Next.js（静的エクスポート）、S3 + CloudFront |
-| 認証 | Amazon Cognito User Pool |
+| フロントエンド | React / Next.js、S3 + CloudFront |
+| 認証 | Amazon Cognito |
 | API | API Gateway（REST + WebSocket） |
-| バックエンド | AWS Lambda（Python 3.12）× 9 関数 |
-| 文字起こし | Amazon Transcribe Streaming |
-| AI / ML | Amazon Bedrock（Claude 3 Haiku）+ Guardrails |
+| ライブ文字起こし | ECS EC2 (t3.micro) + ALB + Transcribe Streaming |
+| 翻訳 | Amazon Translate |
+| AI | Amazon Bedrock（Claude Haiku 4.5）+ Guardrails |
 | オーケストレーション | AWS Step Functions |
-| ストレージ | Amazon S3、Amazon DynamoDB |
-| 監視 | Amazon CloudWatch |
-| IaC | Terraform |
-| UI デザイン | Lusion インスパイアのダークテーマ |
+| バックエンド | AWS Lambda（Python 3.12）× 10 |
+| ストレージ | Amazon S3、DynamoDB |
+| 通知 | Amazon SNS |
+| ネットワーク | VPC、ALB、NAT Gateway |
+| IaC | Terraform（約 130 リソース） |
 
-## プロジェクト構成
+<br/>
 
-```
-.
-├── backend/                  # Python Lambda 関数
-│   ├── lambdas/              # 9 つの Lambda ハンドラー
-│   ├── models/               # データモデル（dataclass）
-│   ├── prompts/              # Bedrock プロンプトテンプレート
-│   ├── schemas/              # Minutes Schema（JSON Schema）
-│   └── utils/                # 共有ユーティリティ
-├── frontend/                 # React / Next.js フロントエンド
-│   └── src/
-│       ├── api/              # 型付き API クライアント
-│       ├── app/              # ページ（login, capture, meetings）
-│       ├── auth/             # Cognito 認証モジュール
-│       ├── capture/          # 音声キャプチャ + WebSocket
-│       ├── components/       # UI コンポーネント
-│       └── styles/           # デザインシステム
-├── infra/                    # Terraform インフラストラクチャ
-├── tests/                    # ユニットテスト + プロパティテスト
-├── scripts/                  # デプロイスクリプト
-└── docs/                     # ドキュメント + アーキテクチャ図
-```
+## 🚀 はじめに
 
-## デプロイ
-
-デプロイ手順は **[infra/README.md](infra/README.md)** を参照してください。
-
-## コスト見積もり
-
-AWS コストの詳細な内訳は **[infra/cost_estimation.md](infra/cost_estimation.md)** を参照してください。
-
-## テストの実行
+> 詳細なデプロイ手順: **[infra/README.md](./infra/README.md)**
 
 ```bash
-# Python バックエンドテスト（208 テスト）
-pip install -r backend/requirements.txt -r tests/requirements.txt
-pytest tests/ -v
-
-# フロントエンドテスト（23 テスト）
-cd frontend && npm test
+cd infra && terraform init && terraform apply
+./scripts/deploy-lambdas.sh
+./scripts/deploy-transcription-service.sh
+./scripts/deploy-frontend.sh
 ```
 
-## 今後の改善予定
+<br/>
 
-- **Amazon Bedrock Agents** — 議事録生成後のフォローアップワークフローを自律的に実行（Slack 通知、Jira チケット作成、カレンダー登録など）
-- **Bedrock Knowledge Bases + RAG** — 社内ドキュメントやプロジェクト資料を参照し、より文脈に沿った議事録を生成
-- **話者識別の改善** — 参加者名と話者ラベルの自動マッピング
-- **Google Meet / Zoom 連携** — 録画ファイルの自動インポート
-- **PDF / DOCX エクスポート** — フォーマット済みドキュメントの出力
-- **会議履歴検索** — 過去の議事録を横断検索
-- **会議分析ダッシュボード** — 会議時間、決定事項数、アクションアイテム完了率などの可視化
-- **AWS WAF** — Web アプリケーションファイアウォールによるセキュリティ強化
-- **DynamoDB メタデータ層** — 会議メタデータの高速クエリ対応
+## 📐 アーキテクチャ
 
-## MZJ-IAM 規約
+> 詳細ドキュメント: **[infra/architecture.md](./infra/architecture.md)**
 
-このプロジェクトは MZJ-IAM ポリシーに準拠しています：
+```
+Browser → CloudFront → ALB → ECS EC2 → Transcribe Streaming
+                                      → Amazon Translate（ライブ翻訳）
+                                      → Bedrock（話者再帰属）
+                                      → S3 → Step Functions
+                                              → Cleanup → Chunker → Generator（Bedrock + RAG）
+                                              → Validator → Store → Agent（Bedrock + SNS → Email）
+```
 
-- リソース命名: `Pranav-meeting-minutes-{purpose}`
-- タグ: `User=Pranav`, `Project=meeting-minutes`
-- リージョン: `ap-northeast-1`
+<br/>
+
+## 📂 プロジェクト構成
+
+```
+├── backend/lambdas/       10 Lambda ハンドラー（API、Generator、Agent 等）
+├── services/transcription/ ECS コンテナ（Transcribe + Translate + Bedrock）
+├── frontend/src/           React/Next.js アプリ（ダークテーマ、i18n）
+├── infra/                  Terraform（約 20 .tf ファイル、約 130 リソース）
+├── scripts/                デプロイスクリプト
+└── docs/                   アーキテクチャ図、テスト音声、GIF デモ
+```
+
+<br/>
+
+## 🏷️ 命名規則
+
+| 規約 | 値 |
+|------|-----|
+| リソース命名 | `Pranav-meeting-minutes-{purpose}` |
+| タグ | `User=Pranav`, `Project=meeting-minutes` |
+| パーミッションバウンダリ | `MZJTeamBoundary` |
+| リージョン | `ap-northeast-1` |
+
+<br/>
+
+<div align="center">
+  <sub>AWS上に構築 ❤️ · サーバーレス · セキュア · 多言語対応</sub>
+</div>

@@ -86,6 +86,45 @@ export interface RetryResponse {
   executionArn: string;
 }
 
+export interface AgentNotification {
+  recipient: string;
+  task: string;
+  due_date: string | null;
+  priority: string;
+  sent_at: string;
+  message_id: string | null;
+  error?: string;
+}
+
+export interface OverdueItem {
+  original_task: string;
+  original_owner: string;
+  original_due_date: string | null;
+  current_meeting_reference: string;
+  status: "overdue" | "recurring";
+}
+
+export interface FollowUpSuggestion {
+  recommended: boolean;
+  reason: string;
+  suggested_topics: string[];
+  suggested_participants: string[];
+  recommended_timeframe: string;
+}
+
+export interface AgentReport {
+  agent_execution_timestamp: string;
+  meeting_id: string;
+  meeting_title: string;
+  notifications_sent: AgentNotification[];
+  overdue_items: OverdueItem[];
+  follow_up_suggestion: FollowUpSuggestion | null;
+}
+
+export interface GetAgentReportResponse {
+  agentReport: AgentReport | null;
+}
+
 export interface ApiError {
   error: string;
 }
@@ -134,6 +173,9 @@ export interface ApiClient {
 
   /** POST /meetings/{meetingId}/retry — retry failed minutes generation. */
   retryMeeting(meetingId: string): Promise<RetryResponse>;
+
+  /** GET /meetings/{meetingId}/agent-report — get the agent actions report. */
+  getAgentReport(meetingId: string): Promise<GetAgentReportResponse>;
 }
 
 /**
@@ -231,6 +273,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       return request<RetryResponse>(
         `/meetings/${encodeURIComponent(meetingId)}/retry`,
         { method: "POST" },
+      );
+    },
+
+    getAgentReport(meetingId: string) {
+      return request<GetAgentReportResponse>(
+        `/meetings/${encodeURIComponent(meetingId)}/agent-report`,
       );
     },
   };

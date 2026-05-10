@@ -3,11 +3,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/auth/useAuth";
 import { AudioCapture } from "@/capture/AudioCapture";
+import { Navbar } from "@/components/Navbar";
+import { useI18n } from "@/i18n";
 import {
-  WebSocketManager,
-  type ServerMessage,
+  TranscriptionClient,
   type TranscriptSegment,
-} from "@/capture/WebSocketManager";
+} from "@/capture/TranscriptionClient";
 import { TranscriptPanel } from "@/components/TranscriptPanel";
 
 /**
@@ -24,6 +25,7 @@ type CaptureState = "idle" | "capturing" | "stopping" | "processing";
 
 export default function CapturePage() {
   const auth = useAuth();
+  const { t } = useI18n();
 
   const [captureState, setCaptureState] = useState<CaptureState>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -32,6 +34,8 @@ export default function CapturePage() {
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [meetingId, setMeetingId] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string>("");
+  const [audioLanguage, setAudioLanguage] = useState<string>("en-US");
+  const [displayLanguage, setDisplayLanguage] = useState<string>("same");
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -114,7 +118,7 @@ export default function CapturePage() {
   }, [auth]);
 
   const audioCaptureRef = useRef<AudioCapture | null>(null);
-  const wsManagerRef = useRef<WebSocketManager | null>(null);
+  const transcriptionRef = useRef<TranscriptionClient | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Debug: show auth state
@@ -146,48 +150,6 @@ export default function CapturePage() {
     return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
-  const handleMessage = useCallback((message: ServerMessage) => {
-    switch (message.type) {
-      case "transcript":
-        setSegments((prev) => {
-          const segment = message as TranscriptSegment;
-          // Replace partial segment from same speaker or append
-          if (segment.isPartial) {
-            const lastIdx = prev.length - 1;
-            if (
-              lastIdx >= 0 &&
-              prev[lastIdx].isPartial &&
-              prev[lastIdx].speaker === segment.speaker
-            ) {
-              const updated = [...prev];
-              updated[lastIdx] = segment;
-              return updated;
-            }
-          }
-          return [...prev, segment];
-        });
-        break;
-      case "capture_stopped":
-        setCaptureState("processing");
-        setMeetingId(message.meetingId);
-        // Start polling for completion since Step Functions doesn't send WebSocket messages
-        pollForCompletion(message.meetingId);
-        break;
-      case "processing_complete":
-        setMeetingId(message.meetingId);
-        // Navigate to report view
-        window.location.href = `/meetings/${message.meetingId}`;
-        break;
-      case "error":
-        setMicError(message.message);
-        break;
-      case "connection_warning":
-        setConnectionLost(true);
-        setTimeout(() => setConnectionLost(false), 5000);
-        break;
-    }
-  }, []);
-
   const handleStart = useCallback(async () => {
     setMicError(null);
     setConnectionLost(false);
@@ -199,38 +161,63 @@ export default function CapturePage() {
       return;
     }
 
-    const wsUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL ?? "";
-    if (!wsUrl) {
-      setMicError("WebSocket URL not configured.");
-      return;
-    }
+    // Generate a meeting ID for this session
+    const newMeetingId = crypto.randomUUID();
+    setMeetingId(newMeetingId);
 
-    // Set up WebSocket
-    const wsManager = new WebSocketManager({
-      url: wsUrl,
-      token,
-      onMessage: handleMessage,
-      onOpen: () => {
-        setConnectionLost(false);
+    // Get user info
+    const userId = auth.user?.sub || "";
+
+    // Set up TranscriptionClient (connects to Fargate ALB)
+    const client = new TranscriptionClient({
+      onSegment: (segment: TranscriptSegment) => {
+        setSegments((prev) => {
+          const lastIdx = prev.length - 1;
+
+          // If the last segment was partial, replace it with the new one
+          // (whether the new one is partial or final)
+          if (lastIdx >= 0 && prev[lastIdx].isPartial) {
+            const updated = [...prev];
+            updated[lastIdx] = segment;
+            return updated;
+          }
+
+          // Otherwise append as a new segment
+          return [...prev, segment];
+        });
       },
-      onClose: () => {
-        // Only show warning if still capturing
+      onStopped: (stoppedMeetingId: string) => {
+        setCaptureState("processing");
+        setMeetingId(stoppedMeetingId);
+        pollForLatestMeeting();
       },
-      onError: () => {
+      onError: (error: string) => {
+        setMicError(error);
         setConnectionLost(true);
       },
-      onReconnectFailed: () => {
+      onConnected: () => {
+        setConnectionLost(false);
+      },
+      onDisconnected: () => {
         setConnectionLost(true);
       },
     });
 
-    wsManagerRef.current = wsManager;
-    wsManager.connect();
+    transcriptionRef.current = client;
+    const translationTarget = displayLanguage === "same" ? undefined : displayLanguage;
+    client.connect(newMeetingId, userId, token, audioLanguage, translationTarget);
 
-    // Set up audio capture
+    // Set up audio capture — send raw PCM (not base64) to Fargate
     const audioCapture = new AudioCapture({
-      onChunk: (base64Chunk: string) => {
-        wsManager.sendAudioChunk(base64Chunk);
+      onChunk: (_base64Chunk: string) => {
+        // The AudioCapture gives us base64, but TranscriptionClient needs ArrayBuffer
+        // Decode base64 to binary and send
+        const binaryStr = atob(_base64Chunk);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+        client.sendAudio(bytes.buffer);
       },
       onError: (error: Error) => {
         setMicError(error.message || "Microphone access denied.");
@@ -246,14 +233,14 @@ export default function CapturePage() {
     } catch {
       setCaptureState("idle");
     }
-  }, [auth.getToken, handleMessage]);
+  }, [auth, pollForLatestMeeting, audioLanguage, displayLanguage]);
 
   const handleStop = useCallback(() => {
     setCaptureState("stopping");
 
-    // Send stop signal via WebSocket FIRST (before closing audio)
-    if (wsManagerRef.current) {
-      wsManagerRef.current.sendStopCapture();
+    // Send stop signal to Fargate service FIRST
+    if (transcriptionRef.current) {
+      transcriptionRef.current.stop();
     }
 
     // Then stop audio capture
@@ -274,7 +261,7 @@ export default function CapturePage() {
   useEffect(() => {
     return () => {
       audioCaptureRef.current?.stop();
-      wsManagerRef.current?.disconnect();
+      transcriptionRef.current?.disconnect();
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
   }, []);
@@ -283,6 +270,8 @@ export default function CapturePage() {
     captureState === "capturing" || captureState === "stopping";
 
   return (
+    <>
+    <Navbar />
     <main
       style={{
         background: "var(--bg-primary)",
@@ -322,6 +311,18 @@ export default function CapturePage() {
           />
           <span
             style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--text-tertiary)",
+              background: "var(--bg-elevated)",
+              padding: "1px var(--space-2)",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--border-subtle)",
+            }}
+          >
+            🎤 {audioLanguage}
+          </span>
+          <span
+            style={{
               fontFamily: "var(--font-mono)",
               fontSize: "var(--text-body)",
               color: "var(--text-primary)",
@@ -329,6 +330,35 @@ export default function CapturePage() {
           >
             {formatTime(elapsedSeconds)}
           </span>
+
+          {/* Live language switcher */}
+          <select
+            value={displayLanguage}
+            onChange={(e) => {
+              const newLang = e.target.value;
+              setDisplayLanguage(newLang);
+              const target = newLang === "same" ? null : newLang;
+              if (transcriptionRef.current) {
+                transcriptionRef.current.setDisplayLanguage(target);
+              }
+            }}
+            style={{
+              background: "var(--bg-elevated)", color: "var(--text-primary)",
+              border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-sm)",
+              padding: "2px var(--space-2)", fontSize: "var(--text-xs)",
+              cursor: "pointer", marginLeft: "var(--space-2)",
+            }}
+            title="Display language"
+          >
+            <option value="same">Original</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="zh">中文</option>
+            <option value="fr">Français</option>
+            <option value="de">Deutsch</option>
+            <option value="es">Español</option>
+          </select>
           {captureState === "stopping" && (
             <span
               style={{
@@ -415,7 +445,7 @@ export default function CapturePage() {
               marginBottom: "var(--space-3)",
             }}
           >
-            Meeting Capture
+            {t("capture.title")}
           </h1>
           <p
             style={{
@@ -423,10 +453,64 @@ export default function CapturePage() {
               color: "var(--text-secondary)",
             }}
           >
-            Capture your meeting audio for AI-powered transcription and minutes
-            generation.
+            {t("capture.subtitle")}
           </p>
         </div>
+
+        {/* Language settings (only shown when idle) */}
+        {captureState === "idle" && (
+          <div style={{
+            display: "flex", justifyContent: "center", gap: "var(--space-6)", flexWrap: "wrap",
+          }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+              <label style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                {t("capture.audioLanguage")}
+              </label>
+              <select
+                value={audioLanguage}
+                onChange={(e) => setAudioLanguage(e.target.value)}
+                style={{
+                  background: "var(--bg-elevated)", color: "var(--text-primary)",
+                  border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)",
+                  padding: "var(--space-2) var(--space-3)", fontSize: "var(--text-small)",
+                  cursor: "pointer", minWidth: "140px",
+                }}
+              >
+                <option value="en-US">English (US)</option>
+                <option value="ja-JP">日本語</option>
+                <option value="ko-KR">한국어</option>
+                <option value="zh-CN">中文</option>
+                <option value="fr-FR">Français</option>
+                <option value="de-DE">Deutsch</option>
+                <option value="es-ES">Español</option>
+              </select>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+              <label style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                {t("capture.displayLanguage")}
+              </label>
+              <select
+                value={displayLanguage}
+                onChange={(e) => setDisplayLanguage(e.target.value)}
+                style={{
+                  background: "var(--bg-elevated)", color: "var(--text-primary)",
+                  border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-md)",
+                  padding: "var(--space-2) var(--space-3)", fontSize: "var(--text-small)",
+                  cursor: "pointer", minWidth: "140px",
+                }}
+              >
+                <option value="same">Same as audio</option>
+                <option value="en">English</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+                <option value="zh">中文</option>
+                <option value="fr">Français</option>
+                <option value="de">Deutsch</option>
+                <option value="es">Español</option>
+              </select>
+            </div>
+          </div>
+        )}
 
         {/* Action buttons */}
         <div
@@ -446,7 +530,7 @@ export default function CapturePage() {
                 fontSize: "var(--text-h3)",
               }}
             >
-              Start Meeting Capture
+              {t("capture.start")}
             </button>
           )}
 
@@ -460,7 +544,7 @@ export default function CapturePage() {
                 fontWeight: 600,
               }}
             >
-              Stop and Generate Minutes
+              {t("capture.stop")}
             </button>
           )}
 
@@ -500,7 +584,32 @@ export default function CapturePage() {
         </div>
 
         {/* Live transcript panel */}
-        {segments.length > 0 && <TranscriptPanel segments={segments} />}
+        {segments.length > 0 && (
+          <div style={{ position: "relative" }}>
+            <TranscriptPanel segments={segments} />
+            <button
+              onClick={() => {
+                const text = segments
+                  .filter((s) => !s.isPartial)
+                  .map((s) => `${s.speaker}: ${s.text}`)
+                  .join("\n");
+                navigator.clipboard.writeText(text).catch(() => {});
+              }}
+              style={{
+                position: "absolute", top: "var(--space-2)", right: "var(--space-2)",
+                background: "var(--bg-elevated)", border: "1px solid var(--border-subtle)",
+                borderRadius: "var(--radius-sm)", padding: "var(--space-1) var(--space-2)",
+                fontSize: "var(--text-xs)", color: "var(--text-tertiary)",
+                cursor: "pointer", transition: "color var(--duration-fast)",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-primary)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-tertiary)")}
+              title="Copy transcription"
+            >
+              📋 Copy
+            </button>
+          </div>
+        )}
 
         {/* Debug info - remove after testing */}
         {debugInfo && (
@@ -522,5 +631,6 @@ export default function CapturePage() {
         )}
       </div>
     </main>
+    </>
   );
 }

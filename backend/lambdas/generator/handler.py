@@ -53,6 +53,10 @@ def _get_model_id() -> str:
     )
 
 
+def _get_data_bucket() -> str:
+    return os.environ.get("DATA_BUCKET", "")
+
+
 # ---------------------------------------------------------------------------
 # Prompt template loading
 # ---------------------------------------------------------------------------
@@ -86,13 +90,131 @@ def build_prompt(
     transcript_text: str,
     schema_version: str,
     language: str,
+    prior_context: str = "No prior meeting context available.",
 ) -> str:
     """Substitute template variables into the prompt template."""
     return (
         template.replace("{transcript}", transcript_text)
         .replace("{schema_version}", schema_version)
         .replace("{language}", language)
+        .replace("{prior_context}", prior_context)
     )
+
+
+# ---------------------------------------------------------------------------
+# RAG — Prior meeting context retrieval
+# ---------------------------------------------------------------------------
+
+_MAX_PRIOR_REPORTS = 3
+
+
+def _get_prior_meeting_context(
+    user_id: str,
+    meeting_id: str,
+    s3_client: Any = None,
+) -> str:
+    """Retrieve context from recent prior meeting reports in S3.
+
+    Lists objects under ``users/{user_id}/reports/``, downloads the most recent
+    reports (excluding the current meeting), and extracts summary + action items
+    to provide as RAG context for the prompt.
+
+    Returns a formatted string of prior meeting context, or a fallback message
+    if no prior meetings exist or an error occurs.
+    """
+    data_bucket = _get_data_bucket()
+    if not data_bucket:
+        logger.info("DATA_BUCKET not configured; skipping prior context.")
+        return "No prior meeting context available."
+
+    if s3_client is None:
+        s3_client = boto3.client("s3")
+
+    prefix = f"users/{user_id}/reports/"
+
+    try:
+        # List all report objects for this user.
+        paginator = s3_client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=data_bucket, Prefix=prefix)
+
+        report_keys: list[dict[str, Any]] = []
+        for page in pages:
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                # Only include minutes.json (not edited versions)
+                if key.endswith("/minutes.json") and meeting_id not in key:
+                    report_keys.append(
+                        {"key": key, "last_modified": obj["LastModified"]}
+                    )
+
+        if not report_keys:
+            logger.info(
+                "No prior reports found for user=%s", user_id
+            )
+            return "No prior meeting context available."
+
+        # Sort by last modified descending and take the most recent N.
+        report_keys.sort(key=lambda x: x["last_modified"], reverse=True)
+        recent_keys = report_keys[:_MAX_PRIOR_REPORTS]
+
+        context_parts: list[str] = []
+        for item in recent_keys:
+            try:
+                resp = s3_client.get_object(
+                    Bucket=data_bucket, Key=item["key"]
+                )
+                report_data = json.loads(resp["Body"].read().decode("utf-8"))
+
+                title = report_data.get("meeting_title", "Untitled Meeting")
+                meeting_dt = report_data.get("meeting_datetime", "Unknown date")
+                summary = report_data.get("summary", "")
+                decisions = report_data.get("decisions", [])
+                action_items = report_data.get("action_items", [])
+
+                part = f"### {title} ({meeting_dt})\n"
+                if summary:
+                    part += f"Summary: {summary}\n"
+                if decisions:
+                    part += "Decisions:\n"
+                    for d in decisions:
+                        decision_text = (
+                            d.get("decision", "") if isinstance(d, dict) else str(d)
+                        )
+                        part += f"  - {decision_text}\n"
+                if action_items:
+                    part += "Action Items:\n"
+                    for ai in action_items:
+                        task = ai.get("task", "") if isinstance(ai, dict) else str(ai)
+                        owner = (
+                            ai.get("owner", "unassigned")
+                            if isinstance(ai, dict)
+                            else "unassigned"
+                        )
+                        part += f"  - {task} (owner: {owner or 'unassigned'})\n"
+
+                context_parts.append(part)
+            except Exception:
+                logger.warning(
+                    "Failed to read prior report: key=%s", item["key"],
+                    exc_info=True,
+                )
+                continue
+
+        if not context_parts:
+            return "No prior meeting context available."
+
+        logger.info(
+            "Retrieved %d prior meeting reports for context.", len(context_parts)
+        )
+        return "\n".join(context_parts)
+
+    except Exception:
+        logger.warning(
+            "Failed to retrieve prior meeting context for user=%s",
+            user_id,
+            exc_info=True,
+        )
+        return "No prior meeting context available."
 
 
 # ---------------------------------------------------------------------------
@@ -331,16 +453,21 @@ def _generate(event: dict[str, Any]) -> dict[str, Any]:
     language = cleaned_transcript.get("language", "ja-JP")
     schema_version = _get_prompt_version()
 
-    # 3. Build the full prompt.
-    prompt = build_prompt(template, transcript_text, schema_version, language)
+    # 3. Retrieve prior meeting context (RAG).
+    prior_context = _get_prior_meeting_context(user_id, meeting_id)
 
-    # 4. Invoke Bedrock.
+    # 4. Build the full prompt.
+    prompt = build_prompt(
+        template, transcript_text, schema_version, language, prior_context
+    )
+
+    # 5. Invoke Bedrock.
     response_body = invoke_bedrock(prompt)
 
-    # 5. Parse the structured JSON response.
+    # 6. Parse the structured JSON response.
     report_data = extract_json_from_response(response_body)
 
-    # 5b. Fix null values for required string fields that Bedrock may return as null.
+    # 6b. Fix null values for required string fields that Bedrock may return as null.
     if not report_data.get("meeting_datetime"):
         report_data["meeting_datetime"] = cleaned_transcript.get("startTime", datetime.now(timezone.utc).isoformat())
     if not report_data.get("meeting_title"):
@@ -356,7 +483,7 @@ def _generate(event: dict[str, Any]) -> dict[str, Any]:
     if not report_data.get("summary"):
         report_data["summary"] = ""
 
-    # 6. Parse into MinutesReport model and enforce confidence review.
+    # 7. Parse into MinutesReport model and enforce confidence review.
     report = MinutesReport.from_dict(report_data)
     report = enforce_confidence_review(report)
 

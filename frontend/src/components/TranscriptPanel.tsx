@@ -20,6 +20,15 @@ interface TranscriptPanelProps {
   segments: TranscriptSegmentData[];
 }
 
+function formatSpeakerLabel(speaker: string): string {
+  // Handle various formats: "spk_0", "0", "spk_1", "Speaker 1", etc.
+  const num = speaker.replace(/[^0-9]/g, "");
+  if (num !== "") {
+    return `Speaker ${parseInt(num, 10) + 1}`;
+  }
+  return speaker || "Speaker";
+}
+
 export function TranscriptPanel({ segments }: TranscriptPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -66,10 +75,11 @@ export function TranscriptPanel({ segments }: TranscriptPanelProps) {
 
       {segments.map((segment, index) => (
         <div
-          key={`${segment.speaker}-${segment.timestamp}-${index}`}
-          className="fade-in-up"
+          key={`seg-${index}`}
+          className={segment.isPartial ? "" : "fade-in-up"}
           style={{
-            animationDelay: `${Math.min(index * 50, 200)}ms`,
+            animationDelay: segment.isPartial ? "0ms" : `${Math.min(index * 50, 200)}ms`,
+            transition: "opacity var(--duration-fast) var(--ease-out)",
           }}
         >
           {/* Speaker label */}
@@ -84,7 +94,7 @@ export function TranscriptPanel({ segments }: TranscriptPanelProps) {
               marginBottom: "var(--space-1)",
             }}
           >
-            {segment.speaker}
+            {formatSpeakerLabel(segment.speaker)}
           </span>
 
           {/* Segment text */}
