@@ -1,7 +1,17 @@
 # KaiNote — サンプルレポート / Sample Report
 
+## ライブ文字起こし / Live Transcription
+
 <div align="center">
-  <img src="kainote_report.svg" alt="KaiNote Generated Report" width="100%">
+  <img src="images/live_transcription.svg" alt="KaiNote Live Transcription" width="100%">
+</div>
+
+---
+
+## 生成レポート / Generated Report
+
+<div align="center">
+  <img src="images/kainote_report.svg" alt="KaiNote Generated Report" width="100%">
 </div>
 
 ---
